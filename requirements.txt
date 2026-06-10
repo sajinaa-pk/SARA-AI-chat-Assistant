@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+redis
+python-dotenv
+httpx
+groq
+httpx
+wikipedia-api
+typing
