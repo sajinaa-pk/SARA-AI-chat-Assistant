@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SARA Chat Assistant</title>
+    <title>AI Chat Assistant</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
 
@@ -32,7 +32,7 @@
             gap: 12px;
         }
 
-        .wiki-toggle {
+        .mode-toggle {
             display: flex;
             align-items: center;
             gap: 8px;
@@ -41,7 +41,7 @@
             cursor: pointer;
         }
 
-        .wiki-toggle input[type="checkbox"] {
+        .mode-toggle input[type="checkbox"] {
             width: 36px;
             height: 20px;
             appearance: none;
@@ -52,11 +52,11 @@
             transition: background 0.2s;
         }
 
-        .wiki-toggle input[type="checkbox"]:checked {
+        .mode-toggle input[type="checkbox"]:checked {
             background: #1a1a1a;
         }
 
-        .wiki-toggle input[type="checkbox"]::after {
+        .mode-toggle input[type="checkbox"]::after {
             content: '';
             position: absolute;
             width: 16px;
@@ -68,11 +68,11 @@
             transition: left 0.2s;
         }
 
-        .wiki-toggle input[type="checkbox"]:checked::after {
+        .mode-toggle input[type="checkbox"]:checked::after {
             left: 18px;
         }
 
-        #new-chat-btn {
+        #upload-btn, #new-chat-btn {
             background: none;
             border: 1px solid #e0e0e0;
             padding: 8px 16px;
@@ -82,7 +82,20 @@
             color: #555;
         }
 
-        #new-chat-btn:hover { background: #f5f5f5; }
+        #upload-btn:hover, #new-chat-btn:hover { background: #f5f5f5; }
+
+        #pdf-status {
+            font-size: 13px;
+            color: #0a7d3a;
+            background: #e8f7ed;
+            padding: 6px 12px;
+            border-radius: 8px;
+            display: none;
+            align-items: center;
+            gap: 6px;
+        }
+
+        #pdf-status.active { display: flex; }
 
         #chat-window {
             flex: 1;
@@ -117,7 +130,7 @@
             border-bottom-left-radius: 4px;
         }
 
-        .wiki-badge {
+        .source-badge {
             font-size: 11px;
             background: #f0f0f0;
             color: #555;
@@ -176,16 +189,23 @@
 
         .empty-state h2 { font-size: 20px; color: #555; }
         .empty-state p { font-size: 14px; }
+
+        #file-input { display: none; }
     </style>
 </head>
 <body>
     <header>
-        <h1>SARA Chat Assistant</h1>
+        <h1>AI Chat Assistant</h1>
         <div class="header-right">
-            <label class="wiki-toggle">
-                <input type="checkbox" id="wiki-toggle">
-                Wikipedia mode
+            <div id="pdf-status">
+                <span id="pdf-filename"></span>
+            </div>
+            <label class="mode-toggle">
+               <input type="checkbox" id="wiki-toggle" onchange="handleWikiToggle(this.checked)">
+                Wikipedia
             </label>
+            <input type="file" id="file-input" accept=".pdf" onchange="handleFileUpload(event)">
+            <button id="upload-btn" onclick="document.getElementById('file-input').click()">Upload PDF</button>
             <button id="new-chat-btn" onclick="newChat()">New chat</button>
         </div>
     </header>
@@ -193,7 +213,7 @@
     <div id="chat-window">
         <div class="empty-state" id="empty-state">
             <h2>How can I help you?</h2>
-            <p>Send a message to start the conversation</p>
+            <p>Send a message, toggle Wikipedia mode, or upload a PDF</p>
         </div>
     </div>
 
@@ -211,6 +231,7 @@
     <script>
         let sessionId = null;
         let isStreaming = false;
+        let docId = null;
 
         function autoResize(el) {
             el.style.height = 'auto';
@@ -223,29 +244,60 @@
                 sendMessage();
             }
         }
+        function handleWikiToggle(checked) {
+    if (checked && docId) {
+        docId = null;
+        document.getElementById('pdf-status').classList.remove('active');
+    }
+}
+        async function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
 
-        function addMessage(role, text, isWiki = false) {
+            const statusEl = document.getElementById('pdf-status');
+            const filenameEl = document.getElementById('pdf-filename');
+            filenameEl.textContent = 'Indexing ' + file.name + '...';
+            statusEl.classList.add('active');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/upload-pdf', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                docId = data.doc_id;
+                filenameEl.textContent = data.filename + ' (' + data.chunks_indexed + ' chunks)';
+                document.getElementById('wiki-toggle').checked = false;
+            } catch (err) {
+                filenameEl.textContent = 'Upload failed';
+            }
+        }
+
+        function addMessage(role, text, sourceLabel = null) {
             const emptyState = document.getElementById('empty-state');
             if (emptyState) emptyState.remove();
 
             const div = document.createElement('div');
             div.className = `message ${role}`;
 
-            if (isWiki && role === 'assistant') {
+            if (sourceLabel && role === 'assistant') {
                 const badge = document.createElement('div');
-                badge.className = 'wiki-badge';
-                badge.textContent = 'Wikipedia';
+                badge.className = 'source-badge';
+                badge.textContent = sourceLabel;
                 div.appendChild(badge);
             }
 
-            const text_div = document.createElement('div');
-            text_div.textContent = text;
-            div.appendChild(text_div);
+            const textDiv = document.createElement('div');
+            textDiv.textContent = text;
+            div.appendChild(textDiv);
 
             const chatWindow = document.getElementById('chat-window');
             chatWindow.appendChild(div);
             chatWindow.scrollTop = chatWindow.scrollHeight;
-            return text_div;
+            return textDiv;
         }
 
         async function sendMessage() {
@@ -261,7 +313,11 @@
 
             addMessage('user', message);
 
-            const assistantTextDiv = addMessage('assistant', 'Thinking...', useWiki);
+            let sourceLabel = null;
+            if (docId) sourceLabel = 'PDF document';
+            else if (useWiki) sourceLabel = 'Wikipedia';
+
+            const assistantTextDiv = addMessage('assistant', 'Thinking...', sourceLabel);
             assistantTextDiv.style.opacity = '0.5';
             assistantTextDiv.style.fontStyle = 'italic';
 
@@ -272,7 +328,8 @@
                     body: JSON.stringify({
                         message,
                         session_id: sessionId,
-                        use_wiki: useWiki
+                        use_wiki: useWiki,
+                        doc_id: docId
                     })
                 });
 
@@ -306,11 +363,14 @@
 
         function newChat() {
             sessionId = null;
+            docId = null;
+            document.getElementById('pdf-status').classList.remove('active');
+            document.getElementById('wiki-toggle').checked = false;
             const chatWindow = document.getElementById('chat-window');
             chatWindow.innerHTML = `
                 <div class="empty-state" id="empty-state">
                     <h2>How can I help you?</h2>
-                    <p>Send a message to start the conversation</p>
+                    <p>Send a message, toggle Wikipedia mode, or upload a PDF</p>
                 </div>`;
         }
     </script>

@@ -1,22 +1,47 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import StreamingResponse, HTMLResponse
 from pydantic import BaseModel
 from typing import Optional
 import uuid
+import os
+import shutil
 from app.chat import stream_chat
 from app.history import get_history, save_history, clear_history
+from app.pdf_rag import index_pdf
 
 app = FastAPI()
+
+UPLOAD_DIR = "uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 class ChatRequest(BaseModel):
     message: str
     session_id: Optional[str] = None
     use_wiki: bool = False
+    doc_id: Optional[str] = None
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
     with open("app/templates/index.html") as f:
         return HTMLResponse(content=f.read())
+
+@app.post("/upload-pdf")
+async def upload_pdf(file: UploadFile = File(...)):
+    doc_id = str(uuid.uuid4())
+    file_path = os.path.join(UPLOAD_DIR, f"{doc_id}.pdf")
+
+    with open(file_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    chunk_count = index_pdf(file_path, doc_id)
+
+    os.remove(file_path)
+
+    return {
+        "doc_id": doc_id,
+        "filename": file.filename,
+        "chunks_indexed": chunk_count
+    }
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
@@ -25,7 +50,7 @@ async def chat(request: ChatRequest):
 
     async def generate():
         full_response = ""
-        for chunk in stream_chat(history, request.message, request.use_wiki):
+        for chunk in stream_chat(history, request.message, request.use_wiki, request.doc_id):
             full_response += chunk
             yield chunk
 

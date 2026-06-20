@@ -7,3 +7,6 @@ groq
 httpx
 wikipedia-api
 typing
+chromadb
+pypdf
+python-multipart
